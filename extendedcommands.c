@@ -148,6 +148,9 @@ int install_zip(const char* packagefilepath)
     if (device_flash_type() == MTD) {
         set_sdcard_update_bootloader_message();
     }
+    /* updater_script can't mount 'non-block' devices, do it now, to let zips install anyway */
+    ensure_path_mounted("/data");
+    ensure_path_mounted("/system");
     int status = install_package(packagefilepath);
     ui_reset_progress();
     if (status != INSTALL_SUCCESS) {
