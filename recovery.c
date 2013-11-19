@@ -80,6 +80,8 @@ static const char *SIDELOAD_TEMP_DIR = "/tmp/sideload";
 
 extern UIParameters ui_parameters;    // from ui.c
 
+static int filesystem = 0;
+
 /*
  * The recovery tool communicates with the main system through /cache files.
  *   /cache/recovery/command - INPUT - command line for tool, one arg per line
@@ -730,8 +732,18 @@ prompt_and_wait() {
 
         for (;;) {
             switch (chosen_item) {
-                case ITEM_REBOOT:
-                    return;
+
+            case ITEM_REBOOT:
+		__system("sbin/mount_fs.sh boot_primary");
+                return;
+
+            case ITEM_REBOOT_SECONDARY:
+		__system("sbin/mount_fs.sh boot_secondary");
+                return;
+
+            case ITEM_DUALBOOT_MENU:
+                show_dualboot_menu();
+                break;
 
                 case ITEM_WIPE_DATA:
                     wipe_data(ui_text_visible());
@@ -757,7 +769,7 @@ prompt_and_wait() {
                     break;
 
                 case ITEM_PARTITION:
-                    ret = show_partition_menu();
+                    ret = show_pre_partition_menu();
                     break;
 
                 case ITEM_ADVANCED:
@@ -1090,4 +1102,18 @@ main(int argc, char **argv) {
 
 int get_allow_toggle_display() {
     return allow_display_toggle;
+}
+
+void set_filesystem(int fs) {
+    if (filesystem != fs) {
+	filesystem = fs;
+    	ensure_path_unmounted("/system");
+    	ensure_path_unmounted("/data");
+    	ensure_path_unmounted("/cache");
+	load_volume_table();
+    }
+}
+
+int get_filesystem() {
+    return filesystem;
 }

@@ -168,6 +168,37 @@ int install_zip(const char* packagefilepath)
     return 0;
 }
 
+int install_rom_zip(const char* packagefilepath, const char* mount_point)
+{
+    char tmp[PATH_MAX];
+
+    ui_print("\n-- Installing rom: %s\n", packagefilepath);
+    if (device_flash_type() == MTD) {
+        set_sdcard_update_bootloader_message();
+    }
+    int status = install_package(packagefilepath);
+    ui_reset_progress();
+
+    if (status != INSTALL_SUCCESS) {
+        ui_set_background(BACKGROUND_ICON_ERROR);
+        ui_print("Installation aborted.\n");
+        return 1;
+    }
+
+    ui_set_background(BACKGROUND_ICON_NONE);
+    ui_print("\nInstall from sdcard complete.\n");
+
+    /*sprintf(tmp, "flash_kernel.sh %s", mount_point);
+    ui_print("\nFlashing Kernel.\n");
+    int ret = 0;
+    ret = __system(tmp);
+    if (ret != 0)*/
+        ui_print("");
+        ui_print("Please flash the dualboot kernel again.\n");	
+
+    return 0;
+}
+
 // top fixed menu items, those before extra storage volumes
 #define FIXED_TOP_INSTALL_ZIP_MENUS 1
 // bottom fixed menu items, those after extra storage volumes
@@ -213,19 +244,19 @@ int show_install_update_menu()
     {
         chosen_item = get_menu_selection(headers, install_menu_items, 0, 0);
         if (chosen_item == 0) {
-            show_choose_zip_menu(primary_path);
+            show_location_menu(primary_path);
         }
         else if (chosen_item >= FIXED_TOP_INSTALL_ZIP_MENUS &&
                     chosen_item < FIXED_TOP_INSTALL_ZIP_MENUS + num_extra_volumes) {
-            show_choose_zip_menu(extra_paths[chosen_item - FIXED_TOP_INSTALL_ZIP_MENUS]);
+            show_location_menu(extra_paths[chosen_item - FIXED_TOP_INSTALL_ZIP_MENUS]);
         }
         else if (chosen_item == FIXED_TOP_INSTALL_ZIP_MENUS + num_extra_volumes) {
             char *last_path_used;
             last_path_used = read_last_install_path();
             if (last_path_used == NULL)
-                show_choose_zip_menu(primary_path);
+                show_location_menu(primary_path);
             else
-                show_choose_zip_menu(last_path_used);
+                show_location_menu(last_path_used);
         }
         else if (chosen_item == FIXED_TOP_INSTALL_ZIP_MENUS + num_extra_volumes + 1) {
             apply_from_adb();
@@ -452,7 +483,7 @@ char* choose_file_menu(const char* basedir, const char* fileExtensionOrDirectory
     return return_value;
 }
 
-void show_choose_zip_menu(const char *mount_point)
+void show_choose_zip_menu(const char *mount_point, const char *location)
 {
     if (ensure_path_mounted(mount_point) != 0) {
         LOGE ("Can't mount %s\n", mount_point);
@@ -472,9 +503,95 @@ void show_choose_zip_menu(const char *mount_point)
     sprintf(confirm, "Yes - Install %s", basename(file));
 
     if (confirm_selection(confirm_install, confirm)) {
-        install_zip(file);
-        write_last_install_path(dirname(file));
+	write_last_install_path(dirname(file));
+        char tmp[PATH_MAX];
+	if (strstr(location, "primary") != NULL) {
+		// installing to primary filesystem
+		set_filesystem(1);
+	} else if (strstr(location, "secondary") != NULL) {
+		// installing to secondary filesystem
+		set_filesystem(2);
+	} else {
+		set_filesystem(0); //just in case...
+	}
+ 
+	if (strstr(location, "kernel") != NULL) { // kernel or modem
+	   	ui_print("Installing ...\n");
+	   	install_zip(file);
+	} else {
+		if (strstr(location, "rom") != NULL) {
+		   ui_print("Preparing your zip...\n");
+	   	   sprintf(tmp, "dualboot_mod.sh %s %s %s", mount_point, file, location);
+	   	   int ret = 0;
+	   	   ret = __system(tmp);
+	   	   if (ret == 0) {
+	   	   	ui_print("Zip modified...installing rom ...\n");
+	   	   	install_rom_zip(file, mount_point);
+	   	   } else {
+	   	        ui_print("Something went wrong...\n");
+			if ( 0 == ensure_path_mounted("/sdcard") )
+			{   
+			__system("mkdir -p /sdcard/devil/dualboot");
+			__system("cp /tmp/recovery.log /sdcard/devil/recovery.log");
+			ui_print("/tmp/recovery.log was copied to /sdcard/devil/dualboot/recovery.log.\n");
+			}
+		   }
+		}else {
+	   	   install_zip(file);
+		}
+	} 
     }
+}
+
+void show_location_menu(const char *mountp)
+{
+    static char* headers[] = {  "Select: Where and what to install",
+								"",
+								NULL
+    };
+
+    static char* list[] = { "Zip to Primary FS",
+    						"Rom to Primary FS",
+    						"Zip to Secondary FS",
+    						"Rom to Secondary FS",
+    						"kernel, Recovery or Modem",
+    						NULL
+    };
+
+    for (;;)
+    	{
+		int chosen_item = get_menu_selection(headers, list, 0, 0);
+        if (chosen_item == GO_BACK)
+            break;
+		switch (chosen_item)
+        	{
+			case 0:
+			{
+				show_choose_zip_menu(mountp, "primary");
+				break;
+			}
+			case 1:
+			{
+				show_choose_zip_menu(mountp, "primaryrom");
+				break;
+			}
+			case 2:
+			{
+				show_choose_zip_menu(mountp, "secondary");
+				break;
+			}
+			case 3:
+			{
+				show_choose_zip_menu(mountp, "secondaryrom");
+				break;
+			}
+			case 4:
+			{
+				show_choose_zip_menu(mountp, "kernel");
+				break;
+			}
+		}
+	}
 }
 
 void show_nandroid_restore_menu(const char* path)
@@ -685,6 +802,16 @@ int format_device(const char *device, const char *path, const char *fs_type) {
             // Our desired filesystem matches the one in fstab, respect v->length
             length = v->length;
         }
+
+	if (strstr(device, "system.img") != NULL) {
+	   char format_command[PATH_MAX];
+           sprintf(format_command, "/sbin/system_format.sh secondary");
+           __system(format_command);
+           sprintf(format_command, "mount system; rm -rf /system/*; rm -rf /system/.*");
+	   __system(format_command);
+	   return 0;
+	}
+	
         reset_ext4fs_info();
         int result = make_ext4fs(device, length, v->mount_point, sehandle);
         if (result != 0) {
@@ -972,6 +1099,32 @@ int show_partition_menu()
     return chosen_item;
 }
 
+int show_pre_partition_menu() {
+    static char* headers[] = {  "Show Mounts & Storage Menu for",
+                                "Primary or Secondary Filesystem",
+                                NULL
+    };
+
+    char* list[] = { "Storage Menu for Primary Fs",
+		     "Storage Menu for Secondary Fs",
+        	NULL
+    };
+
+    int chosen_item = get_menu_selection(headers, list, 0, 0);
+    int ret = -1;
+    switch (chosen_item) {
+        case 0:
+		set_filesystem(1);
+        	ret = show_partition_menu();
+                break;
+        case 1:
+		set_filesystem(2);
+        	ret = show_partition_menu();
+                break;
+    }
+    return ret;
+}
+
 void show_nandroid_advanced_restore_menu(const char* path)
 {
     if (ensure_path_mounted(path) != 0) {
@@ -1118,18 +1271,34 @@ static void add_nandroid_options_for_volume(char** menu, char* path, int offset)
 {
     char buf[100];
 
-    sprintf(buf, "backup to %s", path);
+    sprintf(buf, "Backup Primary Rom to %s", path);
     menu[offset] = strdup(buf);
 
-    sprintf(buf, "restore from %s", path);
+    sprintf(buf, "Restore Primary Rom from %s", path);
     menu[offset + 1] = strdup(buf);
 
-    sprintf(buf, "delete from %s", path);
+    sprintf(buf, "Advanced Restore Primary Rom from %s", path);
     menu[offset + 2] = strdup(buf);
 
-    sprintf(buf, "advanced restore from %s", path);
+    sprintf(buf, "Backup Secondary Rom to %s", path);
     menu[offset + 3] = strdup(buf);
+
+    sprintf(buf, "Restore Secondary Rom from %s", path);
+    menu[offset + 4] = strdup(buf);
+
+    sprintf(buf, "Advanced Restore Secondary Rom from %s", path);
+    menu[offset + 5] = strdup(buf);
+
+    sprintf(buf, "Delete from %s", path);
+    menu[offset + 6] = strdup(buf);
 }
+
+// number of actions added for each volume by add_nandroid_options_for_volume()
+// these go on top of menu list
+#define NANDROID_ACTIONS_NUM 7
+// number of fixed bottom entries after volume actions
+#define NANDROID_FIXED_ENTRIES 2
+#define NANDROID_FS_INDEPENDANT_ENTRIES 1
 
 int show_nandroid_menu()
 {
@@ -1138,29 +1307,29 @@ int show_nandroid_menu()
     int num_extra_volumes = get_num_extra_volumes();
     int i = 0, offset = 0, chosen_item = 0;
     char* chosen_path = NULL;
-    int max_backup_index = (num_extra_volumes + 1) * 4;
+    int action_entries_num = (num_extra_volumes + 1) * NANDROID_ACTIONS_NUM;
 
     static const char* headers[] = {  "Backup and Restore",
                                       "",
                                       NULL
     };
 
-    static char* list[((MAX_NUM_MANAGED_VOLUMES + 1) * 4) + 2];
+    static char* list[((MAX_NUM_MANAGED_VOLUMES + 1) * NANDROID_ACTIONS_NUM) + NANDROID_FIXED_ENTRIES];
 
     add_nandroid_options_for_volume(list, primary_path, offset);
-    offset += 4;
+    offset += NANDROID_ACTIONS_NUM;
 
     if (extra_paths != NULL) {
         for (i = 0; i < num_extra_volumes; i++) {
             add_nandroid_options_for_volume(list, extra_paths[i], offset);
-            offset += 4;
+            offset += NANDROID_ACTIONS_NUM;
         }
     }
 
-    list[offset] = "free unused backup data";
-    offset++;
-    list[offset] = "choose default backup format";
-    offset++;
+    // fixed bottom entries
+    list[offset] = "Free Unused Backup Data";
+    list[offset + 1] = "Misc Nandroid Settings";
+    offset += NANDROID_FIXED_ENTRIES;
 
 #ifdef RECOVERY_EXTEND_NANDROID_MENU
     extend_nandroid_menu(list, offset, sizeof(list) / sizeof(char*));
@@ -1173,20 +1342,30 @@ int show_nandroid_menu()
         chosen_item = get_filtered_menu_selection(headers, list, 0, 0, offset);
         if (chosen_item == GO_BACK || chosen_item == REFRESH)
             break;
-        int chosen_subitem = chosen_item % 4;
-        if (chosen_item == max_backup_index) {
+        // fixed bottom entries
+        if (chosen_item == (action_entries_num)) {
             run_dedupe_gc();
-        } else if (chosen_item == (max_backup_index + 1)) {
+        } else if (chosen_item == (action_entries_num + 1)) {
             choose_default_backup_format();
-        } else if (chosen_item < max_backup_index){
-            if (chosen_item < 4) {
+        } else if (chosen_item < action_entries_num){
+            // get nandroid volume actions path
+            if (chosen_item < NANDROID_ACTIONS_NUM) {
                 chosen_path = primary_path;
             } else if (extra_paths != NULL) {
-                chosen_path = extra_paths[(chosen_item / 4) -1];
+                chosen_path = extra_paths[(chosen_item / NANDROID_ACTIONS_NUM) -1];
             }
+
+            // process selected nandroid action
+            int chosen_subitem = chosen_item % NANDROID_ACTIONS_NUM;
+	    if (chosen_subitem < (NANDROID_ACTIONS_NUM - NANDROID_FS_INDEPENDANT_ENTRIES)/2) {
+		set_filesystem(1);
+	    }else if (chosen_subitem < NANDROID_ACTIONS_NUM - NANDROID_FS_INDEPENDANT_ENTRIES) {
+		set_filesystem(2);
+	    }
             switch (chosen_subitem) {
-            case 0:
-                {
+            	case 0:
+            	case 3:
+                    {
                     char backup_path[PATH_MAX];
                     time_t t = time(NULL);
                     struct tm *tmp = localtime(&t);
@@ -1205,19 +1384,21 @@ int show_nandroid_menu()
                         sprintf(backup_path, "%s/%s", chosen_path, path_fmt);
                     }
                     nandroid_backup(backup_path);
-                }
-                break;
-            case 1:
-                show_nandroid_restore_menu(chosen_path);
-                break;
-            case 2:
-                show_nandroid_delete_menu(chosen_path);
-                break;
-            case 3:
-                show_nandroid_advanced_restore_menu(chosen_path);
-                break;
-            default:
-                break;
+                    }
+                    break;
+            	case 1:
+            	case 4:
+                    show_nandroid_restore_menu(chosen_path);
+                    break;
+                case 2:
+                case 5:
+                    show_nandroid_advanced_restore_menu(chosen_path);
+                    break;
+                case 6:
+                    show_nandroid_delete_menu(chosen_path);
+                    break;
+                default:
+                    break;
             }
         } else {
 #ifdef RECOVERY_EXTEND_NANDROID_MENU
@@ -1227,7 +1408,7 @@ int show_nandroid_menu()
         }
     }
 out:
-    for (i = 0; i < max_backup_index; i++)
+    for (i = 0; i < action_entries_num; i++)
         free(list[i]);
     return chosen_item;
 }
@@ -1407,10 +1588,33 @@ int can_partition(const char* volume) {
 }
 
 
+void show_dualboot_menu() {
+    static char* headers[] = {  "Dualboot System Mount Menu",
+                                "",
+                                NULL
+    };
+
+    char* list[] = { "create secondary system image",
+        NULL
+    };
+
+    int chosen_item = get_menu_selection(headers, list, 0, 0);
+    switch (chosen_item) {
+    	int ret = -1;
+        case 0:
+        	ret = __system("sbin/create_system.sh");
+    		if (ret != 0)
+    		   LOGE("failed to mount primary filesystem \n please reboot recovery and try again");
+
+    		return ret;
+                break;
+    }
+}
+
 #ifdef ENABLE_LOKI
-    #define FIXED_ADVANCED_ENTRIES 8
+    #define FIXED_ADVANCED_ENTRIES 9
 #else
-    #define FIXED_ADVANCED_ENTRIES 7
+    #define FIXED_ADVANCED_ENTRIES 8
 #endif
 
 int show_advanced_menu()
@@ -1442,12 +1646,13 @@ int show_advanced_menu()
     }
 
     list[2] = "power off";
-    list[3] = "wipe dalvik cache";
-    list[4] = "report error";
-    list[5] = "key test";
-    list[6] = "show log";
+    list[3] = "Primary Rom: Wipe Dalvik Cache";
+    list[4] = "Secondary Rom: Wipe Dalvik Cache";
+    list[5] = "report error";
+    list[6] = "key test";
+    list[7] = "show log";
 #ifdef ENABLE_LOKI
-    list[7] = "toggle loki support";
+    list[8] = "toggle loki support";
 #endif
 
     char list_prefix[] = "partition ";
@@ -1473,6 +1678,8 @@ int show_advanced_menu()
         chosen_item = get_filtered_menu_selection(headers, list, 0, 0, sizeof(list) / sizeof(char*));
         if (chosen_item == GO_BACK || chosen_item == REFRESH)
             break;
+	if (chosen_item == 3) set_filesystem(1);
+	else if (chosen_item == 4) set_filesystem(2);
         switch (chosen_item)
         {
             case 0:
@@ -1511,10 +1718,10 @@ int show_advanced_menu()
                 }
                 ensure_path_unmounted("/data");
                 break;
-            case 4:
+            case 5:
                 handle_failure(1);
                 break;
-            case 5:
+            case 6:
             {
                 ui_print("Outputting key codes.\n");
                 ui_print("Go back to end debugging.\n");
@@ -1529,11 +1736,11 @@ int show_advanced_menu()
                 while (action != GO_BACK);
                 break;
             }
-            case 6:
+            case 7:
                 ui_printlogtail(12);
                 break;
 #ifdef ENABLE_LOKI
-            case 7:
+            case 8:
                 toggle_loki_support();
                 break;
 #endif

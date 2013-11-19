@@ -22,7 +22,9 @@
 
 char* MENU_HEADERS[] = { NULL };
 
-char* MENU_ITEMS[] = { "reboot system now",
+char* MENU_ITEMS[] = { "reboot primary system now",
+		       "reboot secondary system now",
+                       "dual boot menu",
                        "install zip",
                        "wipe data/factory reset",
                        "wipe cache partition",

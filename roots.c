@@ -37,6 +37,66 @@
 
 static struct fstab *fstab = NULL;
 
+static int first_run_done = 0;
+
+// Support additional extra.fstab entries and add device2
+// Needed until fs_mgr_read_fstab() starts to parse a blk_device2 entries
+static struct fstab *fstab_extra = NULL;
+static void add_extra_fstab_entries(int num) {
+    int i;
+    for(i = 0; i < fstab->num_entries; ++i) {
+        if (strcmp(fstab->recs[i].mount_point, fstab_extra->recs[num].mount_point) == 0) {
+            fstab->recs[i].blk_device2 = strdup(fstab_extra->recs[num].blk_device);
+            fstab->recs[i].fs_type2 = strdup(fstab_extra->recs[num].fs_type);
+            if (fstab_extra->recs[num].fs_options != NULL)
+                fstab->recs[i].fs_options2 = strdup(fstab_extra->recs[num].fs_options);
+        }
+    }
+}
+
+static void load_volume_table_extra(int filesystem) {
+    int i;
+
+    switch (filesystem) {
+	case 1:
+		fstab_extra = fs_mgr_read_fstab("/etc/extra1.fstab");
+		break;
+	case 2:
+		fstab_extra = fs_mgr_read_fstab("/etc/extra2.fstab");
+		break;
+    }
+
+    if (!fstab_extra) {
+        fstab_extra = fs_mgr_read_fstab("/etc/extra_default.fstab");
+    }
+
+    if (!fstab_extra) {
+        LOGI("No /etc/extra.fstab\n");
+        return;
+    }
+
+    fprintf(stderr, "extra filesystem table (device2, fstype2, options2):\n");
+    for(i = 0; i < fstab_extra->num_entries; ++i) {
+        Volume* v = &fstab_extra->recs[i];
+        add_extra_fstab_entries(i);
+        fprintf(stderr, "  %d %s %s %s %lld\n", i, v->mount_point, v->fs_type,
+                v->blk_device, v->length);
+    }
+    fprintf(stderr, "\n");
+
+     if (first_run_done == 0) {
+ 	first_run_done = 1;
+    	char init_command[PATH_MAX];
+    	sprintf(init_command, "sbin/mount_fs.sh initial");
+    	__system(init_command);
+    }
+}
+
+Volume* volume_for_path_extra(const char* path) {
+    return fs_mgr_get_entry_for_mount_point(fstab_extra, path);
+}
+//----- end extra.fstab support
+
 int get_num_volumes() {
     return fstab->num_entries;
 }
@@ -48,8 +108,25 @@ Volume* get_device_volumes() {
 void load_volume_table() {
     int i;
     int ret;
+    int filesystem = 1;
 
-    fstab = fs_mgr_read_fstab("/etc/recovery.fstab");
+    if (first_run_done != 0) {
+	filesystem = get_filesystem();
+    }
+
+    switch (filesystem) {
+	case 1:
+		fstab = fs_mgr_read_fstab("/etc/primary.fstab");
+		break;
+	case 2:
+		fstab = fs_mgr_read_fstab("/etc/secondary.fstab");
+		break;
+    }
+
+    if (!fstab) {
+        fstab = fs_mgr_read_fstab("/etc/default.fstab");
+    }
+
     if (!fstab) {
         LOGE("failed to read /etc/recovery.fstab\n");
         return;
@@ -62,6 +139,8 @@ void load_volume_table() {
         fstab = NULL;
         return;
     }
+
+    load_volume_table_extra(filesystem);
 
     fprintf(stderr, "recovery filesystem table\n");
     fprintf(stderr, "=========================\n");
@@ -139,17 +218,33 @@ char* get_android_secure_path() {
 }
 
 int try_mount(const char* device, const char* mount_point, const char* fs_type, const char* fs_options) {
-    if (device == NULL || mount_point == NULL || fs_type == NULL)
+	//LOGE("Trying to mount %s at %s with fs_type: %s and options %s\n", device, mount_point, fs_type, fs_options);
+    if (device == NULL || mount_point == NULL || fs_type == NULL) {
         return -1;
+    }
     int ret = 0;
-    if (fs_options == NULL) {
+    if (fs_options == NULL && strcmp(fs_type, "bind") != 0 && strcmp(fs_type, "img") != 0) {
         ret = mount(device, mount_point, fs_type,
                        MS_NOATIME | MS_NODEV | MS_NODIRATIME, "");
     }
     else {
         char mount_cmd[PATH_MAX];
+	if (strcmp(fs_type, "bind") == 0) {
+        sprintf(mount_cmd, "mount --bind %s %s", device, mount_point);
+	} else if (strcmp(fs_type, "img") == 0) {
+        sprintf(mount_cmd, "mount -o loop %s %s", device, mount_point);
+	} else {
         sprintf(mount_cmd, "mount -t %s -o%s %s %s", fs_type, fs_options, device, mount_point);
+	}
         ret = __system(mount_cmd);
+         //LOGE("ret =%d - mount_cmd=%s\n", ret, mount_cmd); // debug
+    }
+    if (ret == 0) {
+        return 0;
+    } else if (strcmp(mount_point, "/data") == 0) { 
+	ret = __system("sbin/data_mount.sh");
+    } else if (strcmp(mount_point, "/system") == 0) { 
+	ret = __system("mount system");
     }
     if (ret == 0)
         return 0;
@@ -183,9 +278,13 @@ void setup_data_media() {
             break;
         }
     }
+
+    LOGI("using /.secondrom/media for %s\n", mount_point);
     rmdir(mount_point);
-    mkdir("/data/media", 0755);
-    symlink("/data/media", mount_point);
+
+    mkdir("/.secondrom/media", 0755);
+    symlink("/.secondrom/media", mount_point);
+
 }
 
 int is_data_media_volume_path(const char* path) {
@@ -215,11 +314,29 @@ int ensure_path_mounted_at_mount_point(const char* path, const char* mount_point
         setup_data_media();
         return 0;
     }
+
     Volume* v = volume_for_path(path);
+    LOGI("trying to mount %s at %s.\n", v, path);
     if (v == NULL) {
+    int ret = 0; // ignore all the errors, which aren't related to /data or /system
+    if (strstr(path, "/.secondrom/media/.secondrom/data") != NULL) {
+        // bind-mount /data
+        char bindmount_command[PATH_MAX];
+        sprintf(bindmount_command, "mount -o bind /.secondrom/media/.secondrom/data /data");
+        ret = __system(bindmount_command);
+    } else if (strcmp(path, "/data") == 0) { 
+	ret = __system("sbin/data_mount.sh");
+    } else if (strcmp(path, "/system") == 0) { 
+	ret = __system("mount system");
+    } 
+	if (ret == 0) {
+	return 0;
+	} else {
         LOGE("unknown volume for path [%s]\n", path);
         return -1;
+	}
     }
+
     if (strcmp(v->fs_type, "ramdisk") == 0) {
         // the ramdisk is always mounted.
         return 0;
@@ -261,7 +378,26 @@ int ensure_path_mounted_at_mount_point(const char* path, const char* mount_point
     } else if (strcmp(v->fs_type, "ext4") == 0 ||
                strcmp(v->fs_type, "ext3") == 0 ||
                strcmp(v->fs_type, "rfs") == 0 ||
-               strcmp(v->fs_type, "vfat") == 0) {
+               strcmp(v->fs_type, "vfat") == 0 ||
+               strcmp(v->fs_type, "img") == 0 ||
+               strcmp(v->fs_type2, "bind") == 0) {
+
+	    const char *device = NULL;
+	    const char* fs_type = NULL;
+	    if (!fs_mgr_is_voldmanaged(v)) {
+	    	device = v->blk_device2;
+		fs_type = v->fs_type2;
+            	if (device == NULL)
+                    device = v->blk_device;
+            	if (fs_type == NULL)
+		    fs_type = v->fs_type;
+	    } else {
+		device = v->blk_device;
+		fs_type = v->fs_type;
+	    }
+
+        if ((result = try_mount(device, mount_point, fs_type, v->fs_options)) == 0)
+            return 0;
         if ((result = try_mount(v->blk_device, mount_point, v->fs_type, v->fs_options)) == 0)
             return 0;
         if ((result = try_mount(v->blk_device, mount_point, v->fs_type2, v->fs_options2)) == 0)
@@ -283,17 +419,23 @@ static int ignore_data_media = 0;
 
 int ensure_path_unmounted(const char* path) {
     // if we are using /data/media, do not ever unmount volumes /data or /sdcard
+    /*
     if (is_data_media_volume_path(path)) {
         return ensure_path_unmounted("/data");
     }
-    if (strstr(path, "/data") == path && is_data_media() && !ignore_data_media) {
-        return 0;
-    }
+    */
 
     Volume* v = volume_for_path(path);
     if (v == NULL) {
-        LOGE("unknown volume for path [%s]\n", path);
-        return -1;
+	char umount_cmd[PATH_MAX];
+        sprintf(umount_cmd, "umount %s", path);
+        return __system(umount_cmd);
+    }
+
+    if (is_data_media_volume_path(path)) {
+	// don't allow unmounting of data/media
+        //return ensure_path_unmounted("/data");
+	return 0;
     }
 
     if (strcmp(v->fs_type, "ramdisk") == 0) {
@@ -349,9 +491,19 @@ int format_volume(const char* volume) {
         }
     }
 
-    // Only use vold format for exact matches otherwise /sdcard will be
-    // formatted instead of /storage/sdcard0/.android_secure
-    if (fs_mgr_is_voldmanaged(v) && strcmp(volume, v->mount_point) == 0) {
+    int blk2 = 0;
+    const char *device = NULL;
+    if (fs_mgr_is_voldmanaged(v)) {
+	device = v->blk_device2;
+	if (device == NULL)
+            device = v->blk_device;
+	else
+	     blk2 = 1;
+    } else {
+	device = v->blk_device;
+    }
+
+    if (fs_mgr_is_voldmanaged(v) && strcmp(volume, v->mount_point) == 0 && blk2 == 0) {
         if (ensure_path_unmounted(volume) != 0) {
             LOGE("format_volume failed to unmount %s", v->mount_point);
         }
@@ -400,11 +552,26 @@ int format_volume(const char* volume) {
     }
 
     if (strcmp(v->fs_type, "ext4") == 0) {
-        int result = make_ext4fs(v->blk_device, v->length, volume, sehandle);
-        if (result != 0) {
-            LOGE("format_volume: make_extf4fs failed on %s\n", v->blk_device);
-            return -1;
-        }
+	int ret = 1;
+	if (strstr(v->blk_device, "data.img") != NULL) {
+	   ret = 0;
+    	   static char tmp[PATH_MAX];
+           sprintf(tmp, "mount data; rm -rf /data/*; rm -rf /data/.*");
+	   __system(tmp);
+	}
+	if (strstr(v->blk_device, "system.img") != NULL) {
+	   ret = 0;
+    	   static char tmp[PATH_MAX];
+           sprintf(tmp, "mount system; rm -rf /system/*; rm -rf /system/.*");
+	   __system(tmp);
+	}
+	if (ret != 0) {
+            int result = make_ext4fs(device, v->length, volume, sehandle);
+            if (result != 0) {
+            	LOGE("format_volume: make_extf4fs failed on %s\n", device);
+            	return -1;
+             }
+	}
         return 0;
     }
 

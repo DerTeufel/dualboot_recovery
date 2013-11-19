@@ -23,7 +23,7 @@ int
 show_nandroid_menu();
 
 int
-show_partition_menu();
+show_pre_partition_menu();
 
 int
 install_zip(const char* packagefilepath);
@@ -33,6 +33,9 @@ __system(const char *command);
 
 int
 show_advanced_menu();
+
+void
+show_dualboot_menu();
 
 int format_device(const char *device, const char *path, const char *fs_type);
 

@@ -19,8 +19,12 @@
 
 #include "common.h"
 
-// Load and parse volume data from /etc/recovery.fstab.
+// Load and parse volume data from /etc/recovery.fstab or others.
 void load_volume_table();
+
+void set_filesystem(int fs);
+
+int get_filesystem();
 
 // Return the Volume* record for this path (or NULL).
 Volume* volume_for_path(const char* path);
