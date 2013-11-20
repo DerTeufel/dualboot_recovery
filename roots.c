@@ -150,6 +150,21 @@ void load_volume_table() {
                v->blk_device, v->length);
     }
     fprintf(stderr, "\n");
+
+    char cp_cmd[PATH_MAX];
+    switch (filesystem) {
+	case 1:
+		sprintf(cp_cmd, "cp -f /etc/fstab1 /etc/fstab");
+		break;
+	case 2:
+		sprintf(cp_cmd, "cp -f /etc/fstab2 /etc/fstab");
+		break;
+	default:
+		sprintf(cp_cmd, "touch /etc/fstab");
+		break;
+    }
+        __system(cp_cmd);
+
 }
 
 Volume* volume_for_path(const char* path) {
