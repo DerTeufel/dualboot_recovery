@@ -1605,9 +1605,18 @@ void show_dualboot_menu() {
     switch (chosen_item) {
     	int ret = -1;
         case 0:
+		ui_print("Creating secondary system image\n");
+		ui_print("This may take some time ...\n");
         	ret = __system("sbin/create_system.sh");
-    		if (ret != 0)
-    		   LOGE("failed to mount primary filesystem \n please reboot recovery and try again");
+    		if (ret > 1) {
+    		   LOGE("Creating of system image failed\n")
+		   LOGE("please check tmp/recovery.log\n");
+		} else if (ret == 1) {
+		ui_print("There's already a system image!\n");
+  		} else {
+		ui_print("done :-)\n");
+		ui_print("Have fun using dualboot\n");
+		}
 
     		return ret;
                 break;
