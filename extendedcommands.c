@@ -1609,7 +1609,7 @@ void show_dualboot_menu() {
 		ui_print("This may take some time ...\n");
         	ret = __system("sbin/create_system.sh");
     		if (ret > 1) {
-    		   LOGE("Creating of system image failed\n")
+    		   LOGE("Creating of system image failed\n");
 		   LOGE("please check tmp/recovery.log\n");
 		} else if (ret == 1) {
 		ui_print("There's already a system image!\n");
@@ -1718,6 +1718,7 @@ int show_advanced_menu()
                 break;
             }
             case 3:
+            case 4:
                 if (0 != ensure_path_mounted("/data"))
                     break;
                 ensure_path_mounted("/sd-ext");

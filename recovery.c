@@ -745,14 +745,33 @@ prompt_and_wait() {
                 show_dualboot_menu();
                 break;
 
-                case ITEM_WIPE_DATA:
+                case ITEM_WIPE_DATA_PRIM:
+		    set_filesystem(1);
                     wipe_data(ui_text_visible());
                     if (!ui_text_visible()) return;
                     break;
 
-                case ITEM_WIPE_CACHE:
+                case ITEM_WIPE_DATA_SEC:
+		    set_filesystem(2);
+                    wipe_data(ui_text_visible());
+                    if (!ui_text_visible()) return;
+                    break;
+
+                case ITEM_WIPE_CACHE_PRIM:
                     if (confirm_selection("Confirm wipe?", "Yes - Wipe Cache"))
                     {
+		    	set_filesystem(1);
+                        ui_print("\n-- Wiping cache...\n");
+                        erase_volume("/cache");
+                        ui_print("Cache wipe complete.\n");
+                        if (!ui_text_visible()) return;
+                    }
+                    break;
+
+                case ITEM_WIPE_CACHE_SEC:
+                    if (confirm_selection("Confirm wipe?", "Yes - Wipe Cache"))
+                    {
+		    	set_filesystem(2);
                         ui_print("\n-- Wiping cache...\n");
                         erase_volume("/cache");
                         ui_print("Cache wipe complete.\n");

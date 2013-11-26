@@ -88,13 +88,15 @@ int device_wipe_data();
 #define ITEM_APPLY_EXT       3
 #define ITEM_APPLY_SDCARD    3  // historical synonym for ITEM_APPLY_EXT
 #define ITEM_APPLY_ZIP       3  // used for installing an update from a zip
-#define ITEM_WIPE_DATA       4
-#define ITEM_WIPE_CACHE      5
+#define ITEM_WIPE_DATA_PRIM  4
+#define ITEM_WIPE_DATA_SEC   5
+#define ITEM_WIPE_CACHE_PRIM 6
+#define ITEM_WIPE_CACHE_SEC  7
 // unused in cwr
-#define ITEM_APPLY_CACHE     6
-#define ITEM_NANDROID        6
-#define ITEM_PARTITION       7
-#define ITEM_ADVANCED        8
+#define ITEM_APPLY_CACHE     8
+#define ITEM_NANDROID        8
+#define ITEM_PARTITION       9
+#define ITEM_ADVANCED        10
 
 // Header text to display above the main menu.
 extern char* MENU_HEADERS[];
